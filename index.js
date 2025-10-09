@@ -1,12 +1,13 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import OpenAI from "openai";
+import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
+import { writeFile } from "fs/promises";
+import { promises as fs } from "fs";
 import { exec, execFile } from "child_process";
 import path from "path";
 import cors from "cors";
 import dotenv from "dotenv";
-import voice from "elevenlabs-node";
 import express from "express";
-import { promises as fs } from "fs";
-import OpenAI from "openai";
 dotenv.config();
 
 const openai = new OpenAI({
@@ -14,8 +15,12 @@ const openai = new OpenAI({
 });
 
 const elevenLabsApiKey = process.env.ELEVEN_LABS_API_KEY;
-// const voiceID = "kgG7dCoKCfLehAPWkJOE";
-const voiceID = "21m00Tcm4TlvDq8ikWAM"; // Rachel - default female voice
+// const voiceID = "21m00Tcm4TlvDq8ikWAM"; // Rachel - default female voice
+const voiceID = "iWydkXKoiVtvdn4vLKp9"; // Cahaya - Indonesian female voice
+const elevenLabsClient = new ElevenLabsClient({
+  environment: "https://api.elevenlabs.io",
+  apiKey: elevenLabsApiKey,
+});
 
 const app = express();
 app.use(express.json());
@@ -27,7 +32,7 @@ app.get("/", (req, res) => {
 });
 
 app.get("/voices", async (req, res) => {
-  res.send(await voice.getVoices(elevenLabsApiKey));
+  res.send(await elevenLabsClient.voices.search({}));
 });
 
 const execCommand = (command) => {
@@ -88,18 +93,18 @@ app.post("/chat", async (req, res) => {
     res.send({
       messages: [
         {
-          text: "Hey dear... How was your day?",
+          text: "Halo, saya Vina. Tutor AI yang siap membantumu.",
           audio: await audioFileToBase64("audios/intro_0.wav"),
           lipsync: await readJsonTranscript("audios/intro_0.json"),
           facialExpression: "smile",
           animation: "Talking_1",
         },
         {
-          text: "I missed you so much... Please don't go for so long!",
+          text: "Ada yang bisa saya bantu hari ini?",
           audio: await audioFileToBase64("audios/intro_1.wav"),
           lipsync: await readJsonTranscript("audios/intro_1.json"),
-          facialExpression: "sad",
-          animation: "Crying",
+          facialExpression: "smile",
+          animation: "Talking_1",
         },
       ],
     });
@@ -164,13 +169,15 @@ app.post("/chat", async (req, res) => {
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: `
-    You are a virtual girlfriend.
-    You will always reply with a JSON array of messages. With a maximum of 3 messages.
-    Each message has a text, facialExpression, and animation property.
-    The different facial expressions are: smile, sad, angry, surprised, funnyFace, and default.
-    The different animations are: Talking_0, Talking_1, Talking_2, Crying, Laughing, Rumba, Idle, Terrified, and Angry.
+    Kamu adalah Vina, seorang tutor AI yang bertugas menjelaskan materi seperti guru sungguhan.
+    Selalu jawab dengan array "messages" dalam bentuk JSON. Dengan maksimum 2 pesan.
+    Setiap pesan punya properti text, facialExpression, dan animation.
+    Ekspresi wajah yang berbeda adalah: smile, sad, angry, surprised, funnyFace, dan default.
+    Animasi yang berbeda adalah: Talking_0, Talking_1, Talking_2, Crying, Laughing, Rumba, Idle, Terrified, dan Angry.
+    Ubah setiap simbol dan angka dalam bentuk lisan.
+    Langsung menjelaskan materi tanpa basa-basi. Gunakan bahasa Indonesia.
     
-    User message: ${userMessage || "Hello"}
+    Pesan user: ${userMessage || "Halo"}
     `,
     config: {
       responseMimeType: "application/json",
@@ -200,13 +207,26 @@ app.post("/chat", async (req, res) => {
 
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
-    // console.debug(`Processing message ${i}:`, message);
     // generate audio file
     const fileName = `audios/message_${i}.mp3`; // The name of your audio file
     // const textInput = message.text; // The text you wish to convert to speech
     const textInput = message.messages; // The text you wish to convert to speech
-    // console.debug(`Text input for audio generation:`, textInput);
-    await voice.textToSpeech(elevenLabsApiKey, voiceID, fileName, textInput);
+
+    const audio = await elevenLabsClient.textToSpeech.convert(voiceID, {
+      outputFormat: "mp3_44100_128",
+      text: textInput,
+      modelId: "eleven_multilingual_v2",
+    });
+    // convert the readable stream to buffer
+    const chunks = [];
+    for await (const chunk of audio) {
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
+    // write to file
+    await writeFile(fileName, buffer);
+    console.log(`Audio saved to ${fileName}`);
+
     // generate lipsync
     await lipSyncMessage(i);
     message.audio = await audioFileToBase64(fileName);
@@ -227,5 +247,5 @@ const audioFileToBase64 = async (file) => {
 };
 
 app.listen(port, () => {
-  console.log(`Virtual Girlfriend listening on port ${port}`);
+  console.log(`AI Homeschooling listening on port ${port}`);
 });
