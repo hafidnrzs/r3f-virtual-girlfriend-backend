@@ -62,12 +62,15 @@ const execFileCommand = (filePath, args = []) => {
 
 const lipSyncMessage = async (message) => {
   const time = new Date().getTime();
-  console.log(`Starting conversion for message ${message}`);
   await execCommand(
     `ffmpeg -y -i audios/message_${message}.mp3 audios/message_${message}.wav`
     // -y to overwrite the file
   );
-  console.log(`Conversion done in ${new Date().getTime() - time}ms`);
+  console.log(
+    `- Conversion for message_${message} done in ${
+      new Date().getTime() - time
+    }ms`
+  );
   // Construct an absolute path to the rhubarb binary so Node executes the
   // same file your terminal runs. Use execFile (no shell) to avoid shell
   // quirks (like './' not working under cmd.exe).
@@ -84,7 +87,9 @@ const lipSyncMessage = async (message) => {
     "phonetic",
   ]);
   // -r phonetic is faster but less accurate
-  console.log(`Lip sync done in ${new Date().getTime() - time}ms`);
+  console.log(
+    `- Lip sync message_${message} done in ${new Date().getTime() - time}ms`
+  );
 };
 
 app.post("/chat", async (req, res) => {
@@ -164,6 +169,7 @@ app.post("/chat", async (req, res) => {
   // }
 
   // Using Gemini AI
+  let time = new Date().getTime();
   const ai = new GoogleGenAI({});
 
   const response = await ai.models.generateContent({
@@ -199,39 +205,56 @@ app.post("/chat", async (req, res) => {
           propertyOrdering: ["messages", "facialExpression", "animation"],
         },
       },
+      temperature: 0.6,
+      maxOutputTokens: 1000,
     },
   });
+  console.log(`Gemini response received in ${new Date().getTime() - time}ms`);
 
   let messages = JSON.parse(response.text);
   console.debug("Parsed messages:", messages);
 
-  for (let i = 0; i < messages.length; i++) {
-    const message = messages[i];
-    // generate audio file
-    const fileName = `audios/message_${i}.mp3`; // The name of your audio file
-    // const textInput = message.text; // The text you wish to convert to speech
-    const textInput = message.messages; // The text you wish to convert to speech
+  time = new Date().getTime();
+  await Promise.all(
+    messages.map(async (message, i) => {
+      const timeAudio = new Date().getTime();
+      // generate audio file
+      const fileName = `audios/message_${i}.mp3`; // The name of your audio file
+      // const textInput = message.text; // The text you wish to convert to speech
+      const textInput = message.messages; // The text you wish to convert to speech
 
-    const audio = await elevenLabsClient.textToSpeech.convert(voiceID, {
-      outputFormat: "mp3_44100_128",
-      text: textInput,
-      modelId: "eleven_multilingual_v2",
-    });
-    // convert the readable stream to buffer
-    const chunks = [];
-    for await (const chunk of audio) {
-      chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
-    // write to file
-    await writeFile(fileName, buffer);
-    console.log(`Audio saved to ${fileName}`);
+      const audio = await elevenLabsClient.textToSpeech.convert(voiceID, {
+        outputFormat: "mp3_44100_128",
+        text: textInput,
+        modelId: "eleven_multilingual_v2",
+      });
+      console.debug(
+        `- Audio generation for message_${i} done in ${
+          new Date().getTime() - timeAudio
+        }ms`
+      );
 
-    // generate lipsync
-    await lipSyncMessage(i);
-    message.audio = await audioFileToBase64(fileName);
-    message.lipsync = await readJsonTranscript(`audios/message_${i}.json`);
-  }
+      // convert the readable stream to buffer
+      const chunks = [];
+      for await (const chunk of audio) {
+        chunks.push(chunk);
+      }
+      const buffer = Buffer.concat(chunks);
+      // write to file
+      await writeFile(fileName, buffer);
+      console.log(`- Audio saved to ${fileName}`);
+
+      // generate lipsync
+      await lipSyncMessage(i);
+      message.audio = await audioFileToBase64(fileName);
+      message.lipsync = await readJsonTranscript(`audios/message_${i}.json`);
+    })
+  );
+  console.debug(
+    `Finished generating audio and lipsync for all messages in ${
+      new Date().getTime() - time
+    }ms`
+  );
 
   res.send({ messages });
 });
